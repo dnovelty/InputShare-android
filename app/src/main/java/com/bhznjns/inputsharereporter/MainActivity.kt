@@ -68,7 +68,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupFab() {
         fun getIconFromState(isExtended: Boolean): Int =
-            if (isExtended) R.drawable.play_64 else R.drawable.stop_64
+            if (isExtended) R.drawable.play_64 else R.drawable.pause_64
 
         val fab = findViewById<ExtendedFloatingActionButton>(R.id.fab)
         fab.isExtended = !isAccessibilityServiceEnabled
