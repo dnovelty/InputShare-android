@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Context.WINDOW_SERVICE
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Build
 import android.util.AttributeSet
 import android.util.Log
 import android.view.Gravity
@@ -16,6 +17,15 @@ import com.bhznjns.inputsharereporter.utils.Direction
 typealias TriggeredCallback = () -> Unit
 
 class SideLineOverlay : View {
+    companion object {
+        // A 1px strip is nearly impossible to hit: the injected mouse cursor
+        // is clamped to the physical edge (e.g. y=0), but on many devices the
+        // overlay is laid out below the status bar / cutout, missing that
+        // pixel entirely. A 16px strip (about 4dp on xxhdpi) is still
+        // invisible in normal use but reliably catchable by hover events.
+        private const val EDGE_TRIGGER_THICKNESS_PX = 16
+    }
+
     private lateinit var triggerCallback: TriggeredCallback
     private lateinit var params: WindowManager.LayoutParams
 
@@ -56,21 +66,26 @@ class SideLineOverlay : View {
 
     @SuppressLint("RtlHardcoded")
     private fun setParamWithDirection(direction: Direction) {
+        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                // Allow the strip to extend into the status bar / cutout area
+                // so it really sits on the physical screen edge (y=0 / x=0),
+                // where the injected mouse cursor gets clamped by the system.
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         params = when (direction) {
             Direction.UP, Direction.DOWN -> WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
-                1,
+                EDGE_TRIGGER_THICKNESS_PX,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                flags,
                 PixelFormat.TRANSLUCENT
             )
             Direction.LEFT, Direction.RIGHT -> WindowManager.LayoutParams(
-                1,
+                EDGE_TRIGGER_THICKNESS_PX,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                flags,
                 PixelFormat.TRANSLUCENT
             )
         }
@@ -79,6 +94,10 @@ class SideLineOverlay : View {
             Direction.RIGHT -> Gravity.RIGHT
             Direction.UP    -> Gravity.TOP
             Direction.DOWN  -> Gravity.BOTTOM
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
     }
 
