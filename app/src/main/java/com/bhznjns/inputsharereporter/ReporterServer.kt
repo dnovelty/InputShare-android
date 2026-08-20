@@ -14,7 +14,6 @@ import com.bhznjns.inputsharereporter.utils.I18n // Assuming I18n is available
 import java.io.IOException
 import java.io.OutputStream
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 const val SERVER_EVENT_KEEPALIVE = 0x00
@@ -26,12 +25,36 @@ const val KEEPALIVE_INTERVAL_MS = 4000L
 const val RETRY_INTERVAL_MS = 1000L
 
 class ReporterServer : Service() {
-    private val executor = Executors.newFixedThreadPool(2)
+    private val isRunning = AtomicBoolean(false)
+
+    // accept 专用线程：阻塞在 LocalServerSocket.accept()，不与事件发送互相抢占
+    private val serverExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "ReporterServer-accept")
+    }
+    // 发送专用线程：toggle/keepalive 串行写入 socket，保证事件即时、有序发出
+    private val sendExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "ReporterServer-sender")
+    }
     private val uiHandler = Handler(Looper.getMainLooper())
+
+    // 心跳定时器：主线程 postDelayed 定时投递，替代 sleep 长期占用线程
+    private val heartbeatHandler = Handler(Looper.getMainLooper())
+    private val heartbeatRunnable = object : Runnable {
+        override fun run() {
+            if (!isRunning.get()) return
+            sendExecutor.execute {
+                // 心跳写失败说明连接已断开，触发重连
+                if (!sendBytes(byteArrayOf(SERVER_EVENT_KEEPALIVE.toByte()))) {
+                    stopServer(true)
+                }
+            }
+            heartbeatHandler.postDelayed(this, KEEPALIVE_INTERVAL_MS)
+        }
+    }
+
     private var serverSocket: LocalServerSocket? = null
     private var clientSocket: LocalSocket? = null
     private var outputStream: OutputStream? = null
-    private val isRunning = AtomicBoolean(false)
 
     private fun startServer() {
         if (!isRunning.compareAndSet(false, true)) {
@@ -39,7 +62,7 @@ class ReporterServer : Service() {
             return
         }
 
-        executor.execute {
+        serverExecutor.execute {
             try {
                 // Create LocalServerSocket bound to the abstract namespace
                 serverSocket = LocalServerSocket(ABSTRACT_SOCKET_NAME)
@@ -79,15 +102,17 @@ class ReporterServer : Service() {
     }
 
     private fun sendBytes(data: ByteArray): Boolean {
-        if (outputStream == null || clientSocket == null || !clientSocket!!.isConnected) {
+        // 先取局部引用，避免跨线程读到半更新的字段
+        val stream = outputStream
+        val socket = clientSocket
+        if (stream == null || socket == null || !socket.isConnected) {
             Log.e("ReporterServer", "Client is not connected or socket is closed.")
-            // If sending fails, assume connection is lost and stop/retry server
             return false
         }
 
         try {
-            outputStream!!.write(data)
-            outputStream!!.flush()
+            stream.write(data)
+            stream.flush()
         } catch (e: IOException) {
             // Catch IOException for write/flush errors, indicating connection issue
             Log.e("ReporterServer", "Server sending data error: ${e.message}")
@@ -101,37 +126,13 @@ class ReporterServer : Service() {
     }
 
     private fun startHeartbeat() {
-        executor.execute {
-            while (isRunning.get() && clientSocket != null && clientSocket!!.isConnected) {
-                val data = byteArrayOf(SERVER_EVENT_KEEPALIVE.toByte())
-                if (!sendBytes(data)) break
-                try {
-                    Thread.sleep(KEEPALIVE_INTERVAL_MS)
-                } catch (e: InterruptedException) {
-                    // Thread interrupted, likely during server stop
-                    Log.d("ReporterServer", "Heartbeat thread interrupted.")
-                    Thread.currentThread().interrupt() // Restore interrupt flag
-                    break
-                }
-            }
-            stopServer(true)
-            Log.d("ReporterServer", "Heartbeat loop finished.")
-        }
+        heartbeatHandler.removeCallbacks(heartbeatRunnable)
+        heartbeatHandler.post(heartbeatRunnable)
     }
 
     private fun stopServer(retry: Boolean) {
-        fun stopExecutor() {
-            executor.shutdownNow()
-            try {
-                // Wait a bit for tasks to terminate
-                if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
-                    Log.w("ReporterServer", "Executor did not terminate in time.")
-                }
-            } catch (e: InterruptedException) {
-                Log.e("ReporterServer", "Interrupted while waiting for executor termination.")
-                Thread.currentThread().interrupt() // Restore interrupt flag
-            }
-        }
+        // 停止心跳投递，避免重连后多个心跳任务叠加
+        heartbeatHandler.removeCallbacks(heartbeatRunnable)
 
         // Use compareAndSet to ensure only one thread stops the server
         if (!isRunning.compareAndSet(true, false)) {
@@ -140,6 +141,30 @@ class ReporterServer : Service() {
         }
 
         Log.i("ReporterServer", "Attempting to stop server...")
+        // 关闭 socket：串行到发送线程，避免与正在进行的写操作并发
+        sendExecutor.execute {
+            closeSocketResources()
+            if (!retry) {
+                stopExecutors()
+            }
+        }
+
+        if (!retry) {
+            Log.i("ReporterServer", "Server fully stopped (no retry).")
+            return
+        }
+
+        uiHandler.post { Toast.makeText(this, I18n.choose(listOf(
+            "PC client disconnected.",
+            "电脑端已断开连接。",
+        )), Toast.LENGTH_SHORT).show() }
+        uiHandler.postDelayed({
+            Log.i("ReporterServer", "Attempting to restart server...")
+            startServer()
+        }, RETRY_INTERVAL_MS)
+    }
+
+    private fun closeSocketResources() {
         try {
             // Closing LocalSocket will likely cause read/write operations on it to throw IOException
             outputStream?.close()
@@ -155,21 +180,11 @@ class ReporterServer : Service() {
             serverSocket = null
             outputStream = null
         }
+    }
 
-        if (!retry) {
-            stopExecutor()
-            Log.i("ReporterServer", "Server fully stopped (no retry).")
-            return
-        }
-
-        uiHandler.post { Toast.makeText(this, I18n.choose(listOf(
-            "PC client disconnected.",
-            "电脑端已断开连接。",
-        )), Toast.LENGTH_SHORT).show() }
-        uiHandler.postDelayed({
-            Log.i("ReporterServer", "Attempting to restart server...")
-            startServer()
-        }, RETRY_INTERVAL_MS)
+    private fun stopExecutors() {
+        serverExecutor.shutdownNow()
+        sendExecutor.shutdownNow()
     }
 
     override fun onCreate() {
@@ -188,7 +203,7 @@ class ReporterServer : Service() {
     private val binder = LocalBinder()
     inner class LocalBinder : Binder() {
         fun sendEvent(event: Int) {
-            executor.execute {
+            sendExecutor.execute {
                 val ret = this@ReporterServer.sendEvent(event)
                 if (!ret) stopServer(true)
             }
