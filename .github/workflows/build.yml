@@ -1,0 +1,46 @@
+name: Build Reporter APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  # 支持在 Actions 页面手动触发打包
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # 打 debug 包：可直接 adb 安装，适合作为 reporter.apk 部署
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      # 重命名 APK 文件为 reporter.apk
+      - name: Rename APK to reporter.apk
+        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/reporter.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporter-apk
+          path: app/build/outputs/apk/debug/reporter.apk
