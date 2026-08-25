@@ -15,6 +15,10 @@ import com.bhznjns.inputsharereporter.utils.Direction
 
 typealias TriggeredCallback = () -> Unit
 
+/** Jump-zone strip width in dp. Replaces the old 1px hairline so the return
+ *  edge is easier to hit (deskflow's jump-zone behavior). */
+private const val STRIP_WIDTH_DP = 8f
+
 class SideLineOverlay : View {
     private lateinit var triggerCallback: TriggeredCallback
     private lateinit var params: WindowManager.LayoutParams
@@ -56,17 +60,18 @@ class SideLineOverlay : View {
 
     @SuppressLint("RtlHardcoded")
     private fun setParamWithDirection(direction: Direction) {
+        val stripWidth = (STRIP_WIDTH_DP * context.resources.displayMetrics.density).toInt()
         params = when (direction) {
             Direction.UP, Direction.DOWN -> WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
-                1,
+                stripWidth,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT
             )
             Direction.LEFT, Direction.RIGHT -> WindowManager.LayoutParams(
-                1,
+                stripWidth,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
