@@ -6,6 +6,7 @@ import android.content.Context.WINDOW_SERVICE
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.util.Log
 import android.view.Gravity
@@ -19,6 +20,11 @@ typealias TriggeredCallback = () -> Unit
 /** Jump-zone strip width in dp. Replaces the old 1px hairline so the return
  *  edge is easier to hit (deskflow's jump-zone behavior). */
 private const val STRIP_WIDTH_DP = 8f
+
+/** Re-fire the switch-back while the cursor keeps moving on the strip, so a
+ *  debounced first trigger (or a cursor warped onto the strip) does not get
+ *  latched and require an exit + re-enter. */
+private const val TRIGGER_COOLDOWN_MS = 300L
 
 class SideLineOverlay : View {
     private lateinit var triggerCallback: TriggeredCallback
@@ -111,15 +117,17 @@ class SideLineOverlay : View {
         }
     }
 
-    private var triggered = false
+    private var lastTriggerTime = 0L
     override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
-        if (event?.action == MotionEvent.ACTION_HOVER_ENTER) {
-            if (!triggered) {
-                triggerCallback()
+        when (event?.action) {
+            MotionEvent.ACTION_HOVER_ENTER,
+            MotionEvent.ACTION_HOVER_MOVE -> {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastTriggerTime >= TRIGGER_COOLDOWN_MS) {
+                    lastTriggerTime = now
+                    triggerCallback()
+                }
             }
-            triggered = true
-        } else if (event?.action == MotionEvent.ACTION_HOVER_EXIT) {
-            triggered = false
         }
         return super.onGenericMotionEvent(event)
     }
