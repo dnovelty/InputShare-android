@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Context.WINDOW_SERVICE
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Build
 import android.util.AttributeSet
 import android.util.Log
 import android.view.Gravity
@@ -67,7 +68,9 @@ class SideLineOverlay : View {
                 stripWidth,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             )
             Direction.LEFT, Direction.RIGHT -> WindowManager.LayoutParams(
@@ -75,7 +78,9 @@ class SideLineOverlay : View {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             )
         }
@@ -84,6 +89,14 @@ class SideLineOverlay : View {
             Direction.RIGHT -> Gravity.RIGHT
             Direction.UP    -> Gravity.TOP
             Direction.DOWN  -> Gravity.BOTTOM
+        }
+
+        // 挖孔/刘海屏：让悬浮条铺到物理屏幕边缘，否则系统会把窗口压低到挖孔栏以下，
+        // 导致光标还没贴到屏幕边缘（挖孔摄像头稍下方）就触发切回电脑。
+        // 与 deskflow-droid 的 CursorView 处理一致。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         }
     }
 
